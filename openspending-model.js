@@ -1,6 +1,5 @@
 { 
   "dataset": {
-    "model_rev": 2,
     "name": "epsrc-gotw",
     "label": "EPSRC Grants on the Web", 
     "description": "<p>This dataset will eventually be a complete scrape of the <a href=\"http://www.epsrc.ac.uk/\">Engineering and Physical Sciences Research Council</a>'s <a href=\"http://gow.epsrc.ac.uk/\">Grants on the Web</a>, providing information on public money granted to scientists for work in fields ranging from mathematics to materials science, and from information technology to structural engineering.</p> <p>Currently, it contains EPSRC past grants data (i.e. grants that have completed) from 1985 through to 2010. At last count, this included nearly 36,000 grants, totalling over £6B of funding.</p> <p>The dataset includes not only basic information about grants and the institutions and departments to which they were granted, but also industrial sector and research area classifications, as well as information on co-investigators and related grants.</p> <p>Please also note that the license terms of this data are  unclear, and as such this dataset should not currently be considered \"open data\".</p>",
@@ -22,7 +21,8 @@
       "type": "entity",
       "fields": [
         {"column": "recipient_id", "datatype": "id", "name": "name"},
-        {"column": "recipient_name", "datatype": "string", "name": "label"}
+        {"column": "recipient_name", "datatype": "string", "name": "label"},
+        {"constant": "true", "datatype": "constant", "name": "epsrc-principal-investigator"}
       ],
       "description": "The recipient of the grant.",
       "label": "Recipient"
@@ -130,6 +130,14 @@
       "dimension": "department",
       "breakdown": "to",
       "filters": {"taxonomy": "epsrc-gotw:recipient:department"}           
+    },
+    {
+      "entity": "entity",
+      "label": "By grant",
+      "name": "default",
+      "dimension": "to",
+      "breakdown": "grant_reference",
+      "filters": {"epsrc-principal-investigator": "true"}           
     }, 
     {
       "entity": "dataset",
