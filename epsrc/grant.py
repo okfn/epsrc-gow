@@ -12,19 +12,8 @@ class GrantParseException(Exception):
     pass
 
 
-GRANT_DETAIL_URL = "http://gow.epsrc.ac.uk/ViewGrant.aspx?GrantRef=%s"
+GRANT_DETAIL_URL = "http://gow.epsrc.ac.uk/NGBOViewGrant.aspx?GrantRef=%s"
 
-
-def _extract_multiple_ids(elem, type):
-    res = []
-
-    for el in (PyQuery(x) for x in elem.find("a")):
-        o = {}
-        o['id'] = util.extract_id(el.attr.href, type)
-        o['name'] = el.text()
-        res.append(o)
-
-    return res
 
 def _scrape_grant_ref(g, el):
     grant_ref = el.find('#lblGrantReference').eq(0).text()
@@ -45,15 +34,15 @@ def _scrape_pi(g, el):
 
 
 def _scrape_ois(g, el):
-    g['other_investigators'] = _extract_multiple_ids(el, 'Person')
+    g['other_investigators'] = util.extract_multiple_ids(el, 'Person')
 
 
 def _scrape_cois(g, el):
-    g['co_investigators'] = _extract_multiple_ids(el, 'Person')
+    g['co_investigators'] = util.extract_multiple_ids(el, 'Person')
 
 
 def _scrape_pps(g, el):
-    g['project_partners'] = _extract_multiple_ids(el, 'Organisation')
+    g['project_partners'] = util.extract_multiple_ids(el, 'Organisation')
 
 
 def _scrape_dept(g, el):
@@ -126,6 +115,7 @@ def _scrape_org_web(g, el):
         if len(href) > 0:
             g['organisation']['website'] = href
 
+
 def _scrape_abstract(g, el):
     g['abstract'] = ''
 
@@ -169,12 +159,12 @@ MAPPING = {
 b = browser = mechanize.Browser()
 
 
-def scrape_grant_detailed(ref):
+def scrape_grant(ref):
     b.open(GRANT_DETAIL_URL % ref)
-    return scrape_grant_detailed_from_html(ref, b.response().read())
+    return scrape_grant_html(ref, b.response().read())
 
 
-def scrape_grant_detailed_from_html(ref, html):
+def scrape_grant_html(ref, html):
 
     def _scrape_row(idx, row):
         pqrow = PyQuery(row)
@@ -192,4 +182,3 @@ def scrape_grant_detailed_from_html(ref, html):
     _scrape_final_report(grant, page)
 
     return grant
-

@@ -1,88 +1,105 @@
 from __future__ import print_function
 
+import datetime
+import glob
+from itertools import repeat
+import json
+import os
 import re
 import sys
-import datetime
-import json
-from itertools import repeat
 
-from basic import scrape_grants_for_fy
-from detailed import scrape_grant_detailed
+from epsrc.grant import scrape_grant_html
+from epsrc.organisation import scrape_organisation_html
+from epsrc.department import scrape_department_html
 
+PATHS = {
+    'grant': 'NGBOViewGrant.aspx?GrantRef=*',
+    'department': 'NGBOViewDepartment.aspx?DepartmentId=*',
+    'organisation': 'NGBOViewOrganisation.aspx?OrganisationId=*'
+}
 
 def timestamp():
-    return str(datetime.datetime.now())
+    return str(datetime.datetime.utcnow())
+
+def batch(iterable, size=100):
+    iterable = iter(iterable)
+    while True:
+        res = []
+        try:
+            for _ in xrange(size):
+                res.append(iterable.next())
+            yield res
+        except StopIteration:
+            if res:
+                yield res
+            raise StopIteration()
+
+class ScrapeError(Exception):
+    pass
 
 
 class Scraper(object):
 
-    def __init__(self, conn):
+    def __init__(self, conn, root_dir):
         self.conn = conn
+        self.root_dir = root_dir
 
-    def scrape_all(self):
-        self.scrape_basic()
-        self.scrape_detailed()
+    def scrape(self):
+        self.scrape_organisations()
+        self.scrape_departments()
+        self.scrape_grants()
 
-    def scrape_basic(self, years=range(1985, datetime.date.today().year - 1)):
-        print("Scraping basic grants data:", file=sys.stderr)
+    def scrape_organisations(self):
+        self._scrape('organisation')
 
-        for year in years:
-            print("  financial year %d-%d" % (year, year + 1), file=sys.stderr)
+    def scrape_departments(self):
+        self._scrape('department')
 
-            for g in scrape_grants_for_fy(year):
-                pi = grant.pop('pi')
-                org = grant.pop('organisation')
-                dept = grant.pop('department')
+    def scrape_grants(self):
+        self._scrape('grant')
 
-                grant['principal_investigator_id'] = pi['id']
-                grant['department_id'] = dept['id']
+    def _scrape(self, typ):
+        print("Scraping %ss" % typ, file=sys.stderr)
+        paths = os.path.join(self.root_dir, PATHS[typ])
+        files = glob.iglob(paths)
 
-                dept['organisation_id'] = org['id']
+        for b in batch(files):
+            self._scrape_batch(typ, b)
 
-                self.update_or_create_person(pi)
-                self.update_or_create_organisation(org)
-                self.update_or_create_department(dept)
-                self.update_or_create_grant(grant)
-
-            self.conn.commit()
-
-    def scrape_detailed(self, ids=None):
-        print("Scraping detailed grants data:", file=sys.stderr)
-
-        batch_size = 20
-
-        if ids:
-            def get_batch():
-                b = ids[:batch_size]
-                del ids[:batch_size]
-                return b if len(b) > 0 else None
-
-        else:
-            curs = self.conn.cursor()
-            curs.execute('select id from grants')
-
-            def get_batch():
-                b = [x[0] for x in curs.fetchmany(batch_size)]
-                return b if len(b) > 0 else None
-
-        for batch in iter(get_batch, None):
-            self.scrape_detailed_batch(batch)
-
-    def scrape_detailed_batch(self, ids):
-        for id in ids:
+    def _scrape_batch(self, typ, files):
+        for f in files:
+            id = f.split('=')[-1].replace('%2F', '/')
             print("  %s" % id, file=sys.stderr)
-            grant = scrape_grant_detailed(id)
-            self._process_grant_detailed(grant)
+            org = globals()['scrape_%s_html' % typ](id, open(f).read())
+            getattr(self, '_process_%s' % typ)(org)
 
         self.conn.commit()
         print("  COMMITTED BATCH", file=sys.stderr)
 
-    def _process_grant_detailed(self, grant):
+    def _process_organisation(self, organisation):
+        depts = organisation.pop('departments', [])
+        self.update_or_create_organisation(organisation)
+
+        for d in depts:
+            d['organisation_id'] = organisation['id']
+            self.update_or_create_department(d)
+
+    def _process_department(self, dept):
+        org = dept.pop('organisation')
+        org['id'] = self._get_organisation_id_by_name(org['name'])
+        self.update_or_create_organisation(org)
+        dept['organisation_id'] = org['id']
+        self.update_or_create_department(dept)
+
+    def _process_grant(self, grant):
         curs = self.conn.cursor()
 
-        # First, update PI. We have the id from the scrape.
+        # Create skeleton grant to satisfy FK constraints
+        self.update_or_create_grant({'id': grant['id']})
 
+        # First, update PI. We have the id from the scrape.
         try:
+            grant['principal_investigator_id'] = grant['pi']['id']
             self.update_or_create_person(grant.pop('pi'))
         except KeyError:
             f = open('error_grants.txt', 'a')
@@ -97,17 +114,28 @@ class Scraper(object):
         org = grant.pop('organisation')
         dept = grant.pop('department')
 
-        sql = '''select d.organisation_id, g.department_id
-                 from grants as g
-                 left join departments as d on d.id = g.department_id
-                 where g.id = ?'''
-
-        curs.execute(sql, (grant['id'],))
-
-        org['id'], dept['id'] = curs.fetchone()
+        org['id'] = self._get_organisation_id_by_name(org['name'])
+        if org['id'] is None:
+            # We don't already have a reference to this organisation anywhere, so make up an id
+            # that's far outside the range used by EPSRC, and set the local_id flag
+            org['id'] = curs.execute('select max(max(id), 1<<16)+1 from organisations').fetchone()[0]
+            org['local_id'] = True
+            self._create_object('organisations', **dept)
 
         self.update_or_create_organisation(org)
+
+        dept['id'] = self._get_department_id_by_name(dept['name'], org)
+        if dept['id'] is None:
+            # We don't already have a reference to this department anywhere, so make up an id
+            # that's far outside the range used by EPSRC, and set the local_id flag
+            dept['id'] = curs.execute('select max(max(id), 1<<16)+1 from departments').fetchone()[0]
+            dept['organisation_id'] = org['id']
+            dept['local_id'] = True
+            self._create_object('departments', **dept)
+
         self.update_or_create_department(dept)
+
+        grant['department_id'] = dept['id']
 
         # Project partners
 
@@ -136,26 +164,19 @@ class Scraper(object):
         # Research topics
 
         for rt in grant.pop('research_topics'):
-            # Occasionally we get an "Unclassified" grant. There's no point
-            # storing this
-            if len(rt) == 1 and rt[0] == 'Unclassified':
-                continue
+            parent = -1
 
-            # Assert bipartite research topic, simply because the code below
-            # assumes it. The database could support an arbitrary tree.
-            assert len(rt) == 2
+            for t in rt:
+                t_id = self.update_or_create_research_topic(t, parent)
 
-            # A parent_id of -1 indicates the "Root" topic, as INSERTed by the
-            # migration file 002_up.sql
-            prt_id = self.update_or_create_research_topic(rt[0], -1)
-            rt_id = self.update_or_create_research_topic(rt[1], prt_id)
+                sql = '''insert or ignore into grants_research_topics
+                         (grant_id, research_topic_id, created_at, modified_at)
+                         values (?, ?, ?, ?)'''
 
-            sql = '''insert or ignore into grants_research_topics
-                     (grant_id, research_topic_id, created_at, modified_at)
-                     values (?, ?, ?, ?)'''
+                ts = timestamp()
+                curs.execute(sql, (grant['id'], t_id, ts, ts))
 
-            t = timestamp()
-            curs.execute(sql, (grant['id'], rt_id, t, t))
+                parent = t_id
 
         # Co-investigators and Other investigators
 
@@ -186,6 +207,7 @@ class Scraper(object):
         # Finally, process grant itself
 
         grant['panel_history'] = json.dumps(grant['panel_history'])
+
         self.update_or_create_grant(grant)
 
     def update_or_create_grant(self, grant):
@@ -252,6 +274,9 @@ class Scraper(object):
         uid = kwargs['id']
         del kwargs['id']
 
+        if not kwargs.keys():
+            return
+
         set_clause = ', '.join(map(lambda x: x + '=?', kwargs.keys()))
 
         params = kwargs.values()
@@ -260,3 +285,29 @@ class Scraper(object):
 
         sql = 'update %s set %s, modified_at=? where id=?'
         self.conn.execute(sql % (table, set_clause), params)
+
+    def _get_organisation_id_by_name(self, name):
+        curs = self.conn.cursor()
+
+        sql = '''select o.id from organisations as o where o.name = ?'''
+        curs.execute(sql, (name,))
+
+        id_ = curs.fetchone()
+
+        if id_ is None:
+            return None
+        else:
+            return id_[0]
+
+    def _get_department_id_by_name(self, name, org):
+        curs = self.conn.cursor()
+
+        sql = '''select d.id from departments as d where d.name = ? and d.organisation_id = ?'''
+        curs.execute(sql, (name, org['id']))
+
+        id_ = curs.fetchone()
+
+        if id_ is None:
+            return None
+        else:
+            return id_[0]

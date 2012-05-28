@@ -1,3 +1,4 @@
 /pyenv
 /epsrc.db
+*.pyc
 *.egg-info

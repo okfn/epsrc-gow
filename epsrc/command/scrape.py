@@ -4,20 +4,19 @@ import sqlite3
 
 from epsrc.scraper import Scraper
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 parser = argparse.ArgumentParser(description='Scrape EPSRC Grants on the Web data.')
 parser.add_argument('database', type=str,
                     help='The database to fill or update with scraped data.')
-parser.add_argument('-b', '--basic', action='store_true', default=False,
-                    help='Only scrape basic data.')
-parser.add_argument('-y', '--year', type=int, default=None,
-                    help='Only scrape basic data for this financial year.')
-parser.add_argument('-d', '--detailed', action='store_true', default=False,
-                    help='Only scrape detailed data.')
-parser.add_argument('--stdin', action='store_true', default=False,
-                    help='Scrape detailed data only for grants listed on STDIN.')
-
+parser.add_argument('root_dir', type=str,
+                    help='The root directory of the scraped EPSRC grants-on-the-web.')
+parser.add_argument('--orgs-only', action='store_true', default=False,
+                    help='Only scrape organisation data.')
+parser.add_argument('--depts-only', action='store_true', default=False,
+                    help='Only scrape department data.')
+parser.add_argument('--grants-only', action='store_true', default=False,
+                    help='Only scrape grant data.')
 
 def establish_connection(db):
     conn = sqlite3.connect(db)
@@ -42,21 +41,15 @@ def main():
     args = parser.parse_args()
     conn = establish_connection(args.database)
 
-    s = Scraper(conn)
-
-    if args.basic:
-        if args.year:
-            s.scrape_basic(range(args.year, args.year + 1))
-        else:
-            s.scrape_basic()
-    elif args.detailed:
-        if args.stdin:
-            refs = [x.strip() for x in sys.stdin.readlines()]
-            s.scrape_detailed(refs)
-        else:
-            s.scrape_detailed()
+    s = Scraper(conn, args.root_dir)
+    if args.orgs_only:
+        s.scrape_organisations()
+    elif args.depts_only:
+        s.scrape_departments()
+    elif args.grants_only:
+        s.scrape_grants()
     else:
-        s.scrape_all()
+        s.scrape()
 
 if __name__ == '__main__':
     main()

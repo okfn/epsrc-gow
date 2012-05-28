@@ -1,9 +1,9 @@
-# [EPSRC Past Grant portfolio](http://gow.epsrc.ac.uk/SearchPastGrant.aspx)
+# [EPSRC Grant portfolio](http://gow.epsrc.ac.uk/)
 
-As of 2011-03-08, the EPSRC "Grants on the Web" database contains grants dating back to 1985:
+As of 2012-05-28, the EPSRC "Grants on the Web" database contains grants dating back to 1985:
 
-- 35,966 grants
-- £6,055,173,655 of committed funding
+- 43,317 grants
+- £10,935,828,250 of committed funding
 
 This repository contains tools for scraping and manipulating this data into a useful format.
 
@@ -31,17 +31,17 @@ Now install the scraper and its dependencies:
 
 Create the database (or migrate your existing database to the current schema version) by running:
 
-    $ ./migrate.sh epsrc.db 3
+    $ ./migrate.sh epsrc.db 4
 
 ## Usage
 
-To get a database of basic grants information for the financial year beginning 1 Apr 1993, run:
+This scraper operates on a local mirror of the EPSRC GOW website. You must first make this mirror (this will take a *long* time to complete, often several days):
+ 
+    $ wget -c -m gow.epsrc.ac.uk
 
-    $ epsrc-scrape --basic --year 1993 epsrc.db
+Then you can use the `epsrc-scrape` tool to parse this data:
 
-More usefully, to download all the information in the EPSRC GOW repository (this will take a long time to complete):
-
-    $ epsrc-scrape epsrc.db
+    $ epsrc-scrape epsrc.db ./gow.epsrc.ac.uk
 
 Each grant has a unique grant reference, e.g. `GR/J50118/01`. We can check that the example grant above made it into the database with the following command
 
@@ -53,7 +53,7 @@ Each grant has a unique grant reference, e.g. `GR/J50118/01`. We can check that 
                 department_id = 5273
                    created_at = 2011-06-16 12:36:35.164790
                   modified_at = 2011-06-16 12:36:35.164800
-
+                     
 ## Warnings
 
 Be careful with the data this scraper generates. Care has been taken to sanitize the data, but as with any scraper, there may be inconsistencies or missing entries. Please [let me know](https://github.com/nickstenning/epsrc-gow/issues) if you find any problems.
